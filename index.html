@@ -137,7 +137,6 @@ Olivia, 3"></textarea>
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const ROYGBIV = ["#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#4f46e5","#a855f7"];
 
-  // Parse textarea -> expanded entries + counts + distinct names (for color map)
   function parseList(text){
     const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
     const entries = [];
@@ -152,7 +151,6 @@ Olivia, 3"></textarea>
       for (let i=0;i<freq;i++) entries.push(name);
       countsByName.set(name, (countsByName.get(name)||0)+freq);
     }
-    // shuffle entries (Fisher–Yates)
     for (let i=entries.length-1; i>0; i--){
       const j = Math.floor(Math.random()*(i+1));
       [entries[i], entries[j]] = [entries[j], entries[i]];
@@ -160,7 +158,6 @@ Olivia, 3"></textarea>
     return { entries, countsByName, distinct };
   }
 
-  // Color assignment per distinct name (ROYGBIV cycles)
   function assignColors(names){
     const map = new Map();
     let i = 0;
@@ -173,7 +170,7 @@ Olivia, 3"></textarea>
     return map;
   }
 
-  // Match canvas bitmap to CSS size using clientWidth/Height (excludes borders), then scale by DPR.
+  // Scale canvas to CSS size (excluding borders) with DPR; draw using CSS pixels
   function prepareCanvas(canvas){
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cssW = Math.max(1, canvas.clientWidth);
@@ -184,22 +181,21 @@ Olivia, 3"></textarea>
       canvas.height = Math.round(cssH * dpr);
     }
     const ctx = canvas.getContext("2d");
-    // Use CSS pixel coordinates for all drawing; scale to device pixels once.
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { ctx, cssW, cssH, dpr };
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // use CSS-px coords
+    return { ctx, cssW, cssH };
   }
 
   // ---------- state ----------
   const canvas = $("wheel");
-  let data = [];                // expanded entries
-  let namePalette = new Map();  // name -> color
-  let segments = [];            // { name, start, end } in radians
-  let rotation = 0;
+  let data = [];
+  let namePalette = new Map();
+  let segments = [];            // { name, start, end } radians
+  let rotation = 0;             // radians
   let spinning = false;
   const winnerEl = $("winner");
   const legendEl = $("legend");
 
-  // tiny tick sound
+  // tick sound
   function makeTick(){
     const actx = new (window.AudioContext||window.webkitAudioContext)();
     return () => {
@@ -254,7 +250,6 @@ Olivia, 3"></textarea>
     ctx.translate(cssW/2, cssH/2);
     ctx.rotate(rotation);
 
-    // slices + labels
     for (const seg of segments){
       const color = namePalette.get(seg.name) || "#94a3b8";
 
@@ -274,7 +269,6 @@ Olivia, 3"></textarea>
       ctx.fillStyle = "#0b1320"; ctx.font = "600 22px system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif";
       const inner = r*0.35;
       const label = seg.name.length>16? seg.name.slice(0,15)+"…" : seg.name;
-      // halo for readability
       ctx.lineWidth = 6; ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.strokeText(label, inner, 0);
       ctx.fillText(label, inner, 0);
       ctx.restore();
@@ -288,15 +282,16 @@ Olivia, 3"></textarea>
     ctx.restore();
   }
 
-  // ---------- spin logic ----------
+  // ---------- spin logic (guaranteed visual landing) ----------
   const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
 
-  function targetRotationForSegmentIndex(idx, spins=5){
+  // Choose an exact landing angle (inside the target slice), and the total rotation needed
+  function landingForIndex(idx, spins=5){
     const seg = segments[idx];
-    const pad = (seg.end - seg.start)*0.12;                 // avoid landing on borders
-    const landingAngle = rand(seg.start+pad, seg.end-pad);  // wheel-local angle to land under pointer
-    const base = (2*Math.PI) - landingAngle;                // rotate so pointer (0 rad) meets landingAngle
-    return spins*2*Math.PI + base + rand(-0.02,0.02);
+    const pad = (seg.end - seg.start) * 0.14; // stay clear of borders
+    const landingAngle = rand(seg.start + pad, seg.end - pad); // wheel-local angle under the pointer
+    const exactEndRotation = spins * 2*Math.PI + (2*Math.PI - landingAngle); // pointer at 0
+    return { landingAngle, exactEndRotation };
   }
 
   function currentWinningIndex(rot){
@@ -318,17 +313,15 @@ Olivia, 3"></textarea>
     const duration  = clamp(parseInt($("ms").value,10)||5000, 800, 20000);
     const wantDennis = dennisMode && data.some(n => n.toLowerCase() === "dennis");
 
-    let targetIdx;
-    if (wantDennis){
-      const idxs = segments.map((s,i)=>[s.name.toLowerCase(),i]).filter(([n])=>n==="dennis").map(([,i])=>i);
-      targetIdx = choice(idxs);
-    }else{
-      targetIdx = Math.floor(Math.random() * segments.length);
-    }
+    let targetIdx = wantDennis
+      ? choice(segments.map((s,i)=>[s.name.toLowerCase(),i]).filter(([n])=>n==="dennis").map(([,i])=>i))
+      : Math.floor(Math.random() * segments.length);
+
+    // Pick an exact landing rotation inside the target slice
+    const { exactEndRotation } = landingForIndex(targetIdx, spinsFull);
 
     const startRot = rotation;
-    const endRot = targetRotationForSegmentIndex(targetIdx, spinsFull);
-    const overshoot = rand(0.01,0.035) * 2*Math.PI;
+    const overshoot = rand(0.01,0.035) * 2*Math.PI; // for drama
     const settleStart = 0.94;
     const tickOn = $("soundChk").checked;
     let lastTickBand = -1;
@@ -336,14 +329,14 @@ Olivia, 3"></textarea>
     const t0 = performance.now();
     (function frame(now){
       const t = clamp((now - t0)/duration, 0, 1);
-      const e = easeOutCubic(t);
       let rot;
       if (t < settleStart){
-        rot = startRot + e * (endRot + overshoot);
+        rot = startRot + easeOutCubic(t) * (exactEndRotation + overshoot);
       } else {
         const localT = (t - settleStart)/(1 - settleStart);
         const settleE = easeOutCubic(localT);
-        rot = startRot + (endRot + overshoot) + (endRot - (endRot + overshoot)) * settleE;
+        rot = startRot + (exactEndRotation + overshoot)
+            + (exactEndRotation - (exactEndRotation + overshoot)) * settleE;
       }
       rotation = rot;
       draw();
@@ -355,6 +348,10 @@ Olivia, 3"></textarea>
 
       if (t < 1) requestAnimationFrame(frame);
       else {
+        // Hard-snap to the exact landing rotation to guarantee visual match
+        rotation = exactEndRotation;
+        draw();
+
         spinning = false;
         const finalIdx = currentWinningIndex(rotation);
         winnerEl.textContent = `Winner: ${segments[finalIdx]?.name ?? "(none)"}`;
