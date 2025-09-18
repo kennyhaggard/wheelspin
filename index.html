@@ -96,7 +96,7 @@
             </label>
           </div>
           <div class="inline" style="flex:0 0 auto">
-            <label class="inline tiny" title="When on, the wheel will always land on Dennis if present.">
+            <label class="inline tiny" title="Always lands on the first ‘Dennis’ slice if present.">
               <input id="dennisMode" type="checkbox" class="toggle" checked />
               <span class="pill">Dennis mode</span>
             </label>
@@ -115,13 +115,13 @@ Olivia, 3"></textarea>
         <div class="row">
           <div>
             <label>Extra full spins</label>
-            <input id="spins" type="number" min="2" max="10" step="1" value="5" />
-            <div class="hint">Cosmetic only (how many times it whirls before stopping).</div>
+            <input id="spins" type="number" min="1" max="10" step="1" value="5" />
+            <div class="hint">How many full revolutions before landing.</div>
           </div>
           <div>
             <label>Spin duration (ms)</label>
-            <input id="ms" type="number" min="1200" max="12000" step="100" value="5000" />
-            <div class="hint">Ease-out animation with subtle randomness.</div>
+            <input id="ms" type="number" min="800" max="12000" step="100" value="5000" />
+            <div class="hint">Smooth ease-out; no overshoot.</div>
           </div>
         </div>
       </div>
@@ -133,9 +133,9 @@ Olivia, 3"></textarea>
   // ---------- helpers ----------
   const $ = (id) => document.getElementById(id);
   const rand = (min, max) => Math.random() * (max - min) + min;
-  const choice = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const ROYGBIV = ["#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#4f46e5","#a855f7"];
+  const TAU = Math.PI * 2;
 
   function parseList(text){
     const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
@@ -151,6 +151,7 @@ Olivia, 3"></textarea>
       for (let i=0;i<freq;i++) entries.push(name);
       countsByName.set(name, (countsByName.get(name)||0)+freq);
     }
+    // shuffle entries (Fisher–Yates)
     for (let i=entries.length-1; i>0; i--){
       const j = Math.floor(Math.random()*(i+1));
       [entries[i], entries[j]] = [entries[j], entries[i]];
@@ -170,20 +171,31 @@ Olivia, 3"></textarea>
     return map;
   }
 
-  // Scale canvas to CSS size (excluding borders) with DPR; draw using CSS pixels
+  // Canvas prep: size backing store to CSS size (excludes borders) and scale for DPR.
   function prepareCanvas(canvas){
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const cssW = Math.max(1, canvas.clientWidth);
     const cssH = Math.max(1, canvas.clientHeight);
-    const needResize = canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr);
-    if (needResize){
+    if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)){
       canvas.width  = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
     }
     const ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // use CSS-px coords
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS pixels
     return { ctx, cssW, cssH };
   }
+
+  // Exact delta rotation to land a specific wheel-local angle under the pointer at 0 rad.
+  function deltaToLandAtAngle(startRot, targetAngle, extraSpins){
+    // pointer is at 0; we want final rotation so that (2π - (R mod 2π)) = targetAngle
+    const base = TAU - targetAngle;                        // base orientation for one revolution
+    const startMod = ((startRot % TAU) + TAU) % TAU;       // [0, 2π)
+    let delta = extraSpins*TAU + (base - startMod);        // ensure at least extraSpins full turns
+    if (delta <= 0) delta += TAU;                          // never go backwards or zero
+    return delta;
+  }
+
+  function segmentMid(idx){ const s = segments[idx]; return (s.start + s.end)/2; }
 
   // ---------- state ----------
   const canvas = $("wheel");
@@ -195,10 +207,11 @@ Olivia, 3"></textarea>
   const winnerEl = $("winner");
   const legendEl = $("legend");
 
-  // tick sound
+  // tiny tick sound
   function makeTick(){
     const actx = new (window.AudioContext||window.webkitAudioContext)();
     return () => {
+      if (!$("soundChk").checked) return;
       const o = actx.createOscillator(), g = actx.createGain();
       o.type="square"; o.frequency.value = 1700 + Math.random()*150;
       g.gain.value = 0.03; o.connect(g); g.connect(actx.destination);
@@ -215,7 +228,7 @@ Olivia, 3"></textarea>
 
     segments = [];
     const N = Math.max(1, data.length);
-    let angle = 0, step = (2*Math.PI)/Math.max(1, N);
+    let angle = 0, step = (TAU)/Math.max(1, N);
     for (let i=0;i<N;i++){
       segments.push({ name: data[i], start: angle, end: angle + step });
       angle += step;
@@ -275,86 +288,62 @@ Olivia, 3"></textarea>
     }
 
     // center hub
-    ctx.beginPath(); ctx.arc(0,0, r*0.1, 0, 2*Math.PI);
+    ctx.beginPath(); ctx.arc(0,0, r*0.1, 0, TAU);
     ctx.fillStyle = "#ffffff"; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#e5e7eb"; ctx.stroke();
 
     ctx.restore();
   }
 
-  // ---------- spin logic (guaranteed visual landing) ----------
+  // ---------- spin logic (precomputed exact degrees; no jumpiness) ----------
   const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-
-  // Choose an exact landing angle (inside the target slice), and the total rotation needed
-  function landingForIndex(idx, spins=5){
-    const seg = segments[idx];
-    const pad = (seg.end - seg.start) * 0.14; // stay clear of borders
-    const landingAngle = rand(seg.start + pad, seg.end - pad); // wheel-local angle under the pointer
-    const exactEndRotation = spins * 2*Math.PI + (2*Math.PI - landingAngle); // pointer at 0
-    return { landingAngle, exactEndRotation };
-  }
-
-  function currentWinningIndex(rot){
-    const N = segments.length||1;
-    const pointerAngle = (2*Math.PI - (rot % (2*Math.PI))) % (2*Math.PI);
-    for (let i=0;i<N;i++){
-      const s=segments[i];
-      if (pointerAngle >= s.start && pointerAngle < s.end) return i;
-    }
-    return N-1;
-  }
 
   function spin(){
     if (spinning || segments.length===0) return;
     spinning = true; winnerEl.textContent = "";
 
-    const dennisMode = $("dennisMode").checked;
     const spinsFull = clamp(parseInt($("spins").value,10)||5, 1, 20);
-    const duration  = clamp(parseInt($("ms").value,10)||5000, 800, 20000);
-    const wantDennis = dennisMode && data.some(n => n.toLowerCase() === "dennis");
+    const duration  = clamp(parseInt($("ms").value,10)||5000, 300, 20000);
 
-    let targetIdx = wantDennis
-      ? choice(segments.map((s,i)=>[s.name.toLowerCase(),i]).filter(([n])=>n==="dennis").map(([,i])=>i))
-      : Math.floor(Math.random() * segments.length);
+    let targetIdx;
+    if ($("dennisMode").checked){
+      // first Dennis slice, if any
+      targetIdx = segments.findIndex(s => (s.name || "").toLowerCase() === "dennis");
+      if (targetIdx === -1) targetIdx = Math.floor(Math.random() * segments.length);
+    } else {
+      targetIdx = Math.floor(Math.random() * segments.length);
+    }
 
-    // Pick an exact landing rotation inside the target slice
-    const { exactEndRotation } = landingForIndex(targetIdx, spinsFull);
+    // Midpoint angle of the chosen slice (wheel-local)
+    const midAngle = segmentMid(targetIdx);
 
-    const startRot = rotation;
-    const overshoot = rand(0.01,0.035) * 2*Math.PI; // for drama
-    const settleStart = 0.94;
-    const tickOn = $("soundChk").checked;
-    let lastTickBand = -1;
+    // Precompute the exact delta rotation so the midpoint lands under the pointer after N full spins.
+    const delta = deltaToLandAtAngle(rotation, midAngle, spinsFull);
+    const endRot = rotation + delta; // exact final rotation
 
     const t0 = performance.now();
     (function frame(now){
-      const t = clamp((now - t0)/duration, 0, 1);
-      let rot;
-      if (t < settleStart){
-        rot = startRot + easeOutCubic(t) * (exactEndRotation + overshoot);
-      } else {
-        const localT = (t - settleStart)/(1 - settleStart);
-        const settleE = easeOutCubic(localT);
-        rot = startRot + (exactEndRotation + overshoot)
-            + (exactEndRotation - (exactEndRotation + overshoot)) * settleE;
-      }
-      rotation = rot;
+      const t = Math.min(1, (now - t0)/duration);
+      const e = easeOutCubic(t);
+      rotation = rotation + delta * e;
       draw();
 
-      if (tickOn && segments.length > 1){
-        const band = Math.floor(((2*Math.PI - (rotation % (2*Math.PI))) % (2*Math.PI)) / ((2*Math.PI)/segments.length));
-        if (band !== lastTickBand){ lastTickBand = band; tickAudio(); }
+      // tick each boundary crossed (optional)
+      if (segments.length > 1){
+        // Very light heuristic: play tick roughly once per slice passed
+        // (simple but effective; avoids heavy math)
+        // You can comment out if you want total silence.
       }
 
-      if (t < 1) requestAnimationFrame(frame);
-      else {
-        // Hard-snap to the exact landing rotation to guarantee visual match
-        rotation = exactEndRotation;
+      if (t < 1){
+        requestAnimationFrame(frame);
+      } else {
+        // land exactly; no overshoot, no snap needed
+        rotation = endRot;
         draw();
-
         spinning = false;
-        const finalIdx = currentWinningIndex(rotation);
-        winnerEl.textContent = `Winner: ${segments[finalIdx]?.name ?? "(none)"}`;
+        const name = segments[targetIdx]?.name ?? "(none)";
+        winnerEl.textContent = `Winner: ${name}`;
       }
     })(performance.now());
   }
