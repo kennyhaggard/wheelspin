@@ -242,40 +242,31 @@ Olivia, 3"></textarea>
   }
 
   function draw(){
-    fitCanvasToDisplaySize(canvas);                 // keep backing store in sync with CSS
-    const w = canvas.width, h = canvas.height;
-    const r = Math.min(w,h)/2 - 20;
+  // Make sure the internal bitmap matches the CSS size
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth;
+  const cssH = canvas.clientHeight;
+  const needResize =
+    canvas.width !== Math.round(cssW * dpr) ||
+    canvas.height !== Math.round(cssH * dpr);
+  if (needResize) {
+    canvas.width  = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
 
-    ctx.clearRect(0,0,w,h);
-    ctx.save();
-    ctx.translate(w/2, h/2);
-    ctx.rotate(rotation);
+  const w = canvas.width;
+  const h = canvas.height;
+  const r = Math.min(w, h) / 2 - 20;
 
-    const N = Math.max(1, segments.length);
-    for (const seg of segments){
-      const color = namePalette.get(seg.name) || "#94a3b8";
-
-      // slice fill
-      ctx.beginPath(); ctx.moveTo(0,0);
-      ctx.arc(0,0, r, seg.start, seg.end);
-      ctx.closePath(); ctx.fillStyle = color; ctx.fill();
-
-      // slice separator
-      ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(0,0, r, seg.start, seg.start); ctx.stroke();
-
-      // label along radius
-      const mid = (seg.start + seg.end)/2;
-      ctx.save(); ctx.rotate(mid);
-      ctx.textAlign = "left"; ctx.textBaseline = "middle";
-      ctx.fillStyle = "#0b1320"; ctx.font = "600 22px system-ui, sans-serif";
-      const inner = r*0.35;
-      const label = seg.name.length>16? seg.name.slice(0,15)+"…" : seg.name;
-      // halo for readability
-      ctx.lineWidth = 6; ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.strokeText(label, inner, 0);
-      ctx.fillText(label, inner, 0);
-      ctx.restore();
-    }
+  ctx.setTransform(1,0,0,1,0,0);     // reset any old transforms
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(w / 2, h / 2);       // now the true center of the bitmap
+  ctx.scale(dpr, dpr);               // keep text crisp
+  ctx.rotate(rotation);
+  // … draw the wheel slices/labels …
+  ctx.restore();
+}
 
     // center hub
     ctx.beginPath(); ctx.arc(0,0, r*0.1, 0, 2*Math.PI);
