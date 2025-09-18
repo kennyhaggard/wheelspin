@@ -26,7 +26,7 @@
     background:#fff; border:1px solid var(--border); color:#0b1320;
     font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+  .row{display:flex; gap:10px; flex-wrap:wrap;}
   .row > *{flex:1}
   .btn{
     appearance:none; border:1px solid #d6d9e0; background:#f5f7fb; color:#0b1320;
@@ -129,12 +129,10 @@ Olivia, 3"></textarea>
           <div>
             <label>Extra full spins</label>
             <input id="spins" type="number" min="1" max="10" step="1" value="5" />
-            <div class="hint">How many full revolutions before landing.</div>
           </div>
           <div>
             <label>Spin duration (ms)</label>
             <input id="ms" type="number" min="800" max="12000" step="100" value="5000" />
-            <div class="hint">Smooth ease-out; no overshoot.</div>
           </div>
         </div>
       </div>
