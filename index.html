@@ -43,9 +43,16 @@
   input[type="number"]{
     width:100%; padding:10px; border-radius:10px; border:1px solid var(--border); background:#fff; color:#0b1320
   }
+
+  /* —— WHEEL LAYOUT (mobile-safe) —— */
   .canvasWrap{
-    position:relative; aspect-ratio:1/1; max-height:min(78vh, 720px);
+    width:100%;                /* give aspect-ratio a width to compute from */
+    max-width:720px;           /* don’t get comically large */
+    aspect-ratio:1/1;          /* perfect square wheel */
+    height:auto;
+    max-height:min(78svh, 720px); /* svh fixes iOS toolbar vh quirks */
     background:#fff; border-radius:12px; border:1px solid var(--border);
+    position:relative; margin-inline:auto;
   }
   canvas{width:100%; height:100%; display:block; background:transparent; border:0}
   .pointer{
@@ -53,6 +60,7 @@
     width:0; height:0; border-left:16px solid transparent; border-right:16px solid transparent; border-bottom:26px solid #f59e0b;
     filter: drop-shadow(0 6px 10px #0002);
   }
+
   .legend{display:grid; gap:6px; grid-template-columns:repeat(2, minmax(0,1fr)); margin-top:12px}
   .badge{
     display:flex; align-items:center; gap:8px; background:#fff; border:1px solid var(--border); padding:8px 10px; border-radius:10px;
@@ -80,7 +88,7 @@
     </div>
     <div class="grid">
       <div class="card">
-        <div class="canvasWrap">
+        <div class="canvasWrap" id="wrap">
           <div class="pointer"></div>
           <canvas id="wheel" aria-label="Random wheel"></canvas>
         </div>
@@ -151,7 +159,6 @@ Olivia, 3"></textarea>
       for (let i=0;i<freq;i++) entries.push(name);
       countsByName.set(name, (countsByName.get(name)||0)+freq);
     }
-    // shuffle entries (Fisher–Yates)
     for (let i=entries.length-1; i>0; i--){
       const j = Math.floor(Math.random()*(i+1));
       [entries[i], entries[j]] = [entries[j], entries[i]];
@@ -171,11 +178,11 @@ Olivia, 3"></textarea>
     return map;
   }
 
-  // Canvas prep: size backing store to CSS size (excludes borders) and scale for DPR.
-  function prepareCanvas(canvas){
+  // Prepare canvas using wrapper size (CSS pixels) and DPR; skip draw if tiny
+  function prepareCanvas(canvas, wrapper){
     const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const cssW = Math.max(1, canvas.clientWidth);
-    const cssH = Math.max(1, canvas.clientHeight);
+    const cssW = Math.max(1, wrapper.clientWidth);
+    const cssH = Math.max(1, wrapper.clientHeight);
     if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)){
       canvas.width  = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
@@ -185,19 +192,17 @@ Olivia, 3"></textarea>
     return { ctx, cssW, cssH };
   }
 
-  // Exact delta rotation to land a specific wheel-local angle under the pointer at 0 rad.
+  // Exact delta rotation so a target slice midpoint lands under the pointer
   function deltaToLandAtAngle(startRot, targetAngle, extraSpins){
-    // pointer is at 0; we want final rotation so that (2π - (R mod 2π)) = targetAngle
-    const base = TAU - targetAngle;                        // base orientation for one revolution
-    const startMod = ((startRot % TAU) + TAU) % TAU;       // [0, 2π)
-    let delta = extraSpins*TAU + (base - startMod);        // ensure at least extraSpins full turns
-    if (delta <= 0) delta += TAU;                          // never go backwards or zero
+    const base = TAU - targetAngle;
+    const startMod = ((startRot % TAU) + TAU) % TAU;
+    let delta = extraSpins*TAU + (base - startMod);
+    if (delta <= 0) delta += TAU;
     return delta;
   }
 
-  function segmentMid(idx){ const s = segments[idx]; return (s.start + s.end)/2; }
-
   // ---------- state ----------
+  const wrap = $("wrap");
   const canvas = $("wheel");
   let data = [];
   let namePalette = new Map();
@@ -206,19 +211,6 @@ Olivia, 3"></textarea>
   let spinning = false;
   const winnerEl = $("winner");
   const legendEl = $("legend");
-
-  // tiny tick sound
-  function makeTick(){
-    const actx = new (window.AudioContext||window.webkitAudioContext)();
-    return () => {
-      if (!$("soundChk").checked) return;
-      const o = actx.createOscillator(), g = actx.createGain();
-      o.type="square"; o.frequency.value = 1700 + Math.random()*150;
-      g.gain.value = 0.03; o.connect(g); g.connect(actx.destination);
-      o.start(); setTimeout(() => o.stop(), 35);
-    };
-  }
-  const tickAudio = makeTick();
 
   // ---------- build/draw ----------
   function rebuild(){
@@ -234,7 +226,7 @@ Olivia, 3"></textarea>
       angle += step;
     }
     rotation = 0;
-    draw();
+    draw();                // first draw (may no-op if size is 0 on initial layout)
     buildLegend(countsByName);
     winnerEl.textContent = "";
   }
@@ -255,9 +247,11 @@ Olivia, 3"></textarea>
   }
 
   function draw(){
-    const { ctx, cssW, cssH } = prepareCanvas(canvas);
-    const r = Math.min(cssW, cssH)/2 - 20;
+    const { ctx, cssW, cssH } = prepareCanvas(canvas, wrap);
+    // If layout hasn't settled yet on mobile, bail until we have real space
+    if (cssW < 60 || cssH < 60) return;
 
+    const r = Math.min(cssW, cssH)/2 - 20;
     ctx.clearRect(0, 0, cssW, cssH);
     ctx.save();
     ctx.translate(cssW/2, cssH/2);
@@ -295,8 +289,9 @@ Olivia, 3"></textarea>
     ctx.restore();
   }
 
-  // ---------- spin logic (precomputed exact degrees; no jumpiness) ----------
+  // ---------- spin logic (exact degrees; no overshoot) ----------
   const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+  const segmentMid = (i) => (segments[i].start + segments[i].end)/2;
 
   function spin(){
     if (spinning || segments.length===0) return;
@@ -307,43 +302,29 @@ Olivia, 3"></textarea>
 
     let targetIdx;
     if ($("dennisMode").checked){
-      // first Dennis slice, if any
       targetIdx = segments.findIndex(s => (s.name || "").toLowerCase() === "dennis");
       if (targetIdx === -1) targetIdx = Math.floor(Math.random() * segments.length);
     } else {
       targetIdx = Math.floor(Math.random() * segments.length);
     }
 
-    // Midpoint angle of the chosen slice (wheel-local)
     const midAngle = segmentMid(targetIdx);
-
-    // Precompute the exact delta rotation so the midpoint lands under the pointer after N full spins.
-    const delta = deltaToLandAtAngle(rotation, midAngle, spinsFull);
-    const endRot = rotation + delta; // exact final rotation
+    const startRot = rotation;
+    const delta = deltaToLandAtAngle(startRot, midAngle, spinsFull);
+    const endRot = startRot + delta;
 
     const t0 = performance.now();
     (function frame(now){
       const t = Math.min(1, (now - t0)/duration);
       const e = easeOutCubic(t);
-      rotation = rotation + delta * e;
+      rotation = startRot + delta * e;
       draw();
-
-      // tick each boundary crossed (optional)
-      if (segments.length > 1){
-        // Very light heuristic: play tick roughly once per slice passed
-        // (simple but effective; avoids heavy math)
-        // You can comment out if you want total silence.
-      }
-
-      if (t < 1){
-        requestAnimationFrame(frame);
-      } else {
-        // land exactly; no overshoot, no snap needed
-        rotation = endRot;
+      if (t < 1) requestAnimationFrame(frame);
+      else {
+        rotation = endRot;  // exact landing
         draw();
         spinning = false;
-        const name = segments[targetIdx]?.name ?? "(none)";
-        winnerEl.textContent = `Winner: ${name}`;
+        winnerEl.textContent = `Winner: ${segments[targetIdx]?.name ?? "(none)"}`;
       }
     })(performance.now());
   }
@@ -354,11 +335,19 @@ Olivia, 3"></textarea>
   $("list").addEventListener("keydown", (e) => {
     if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==="enter"){ e.preventDefault(); rebuild(); }
   });
-  addEventListener("resize", () => draw(), { passive:true });
+
+  // Redraw on viewport/layout changes
+  addEventListener("resize", draw, { passive:true });
+  // Resize observer to catch mobile layout settling & orientation changes
+  if ('ResizeObserver' in window){
+    const ro = new ResizeObserver(() => draw());
+    ro.observe(wrap);
+  }
 
   // Start empty (paste your list, then Build Wheel)
   $("list").value = "";
-  rebuild();
+  // Defer initial build a tick so mobile layout can settle
+  requestAnimationFrame(rebuild);
 })();
 </script>
 </body>
