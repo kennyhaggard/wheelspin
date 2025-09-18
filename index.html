@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Totally Fair* Random Wheel (*definitely not rigged for Dennis)</title>
+<style>
+  :root { --bg:#0f172a; --card:#111827; --ink:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; }
+  html,body{height:100%}
+  body{
+    margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;
+    background:radial-gradient(1200px 800px at 70% -10%, #1f2937 0%, var(--bg) 45%),
+               linear-gradient(180deg,#0b1020, #0b1020);
+    color:var(--ink); display:flex; align-items:center; justify-content:center; padding:16px;
+  }
+  .app{display:grid; gap:16px; width:min(1100px,100%);}
+  .grid{display:grid; grid-template-columns:1fr 420px; gap:16px}
+  @media (max-width: 980px){ .grid{grid-template-columns:1fr} }
+  .card{
+    background:linear-gradient(180deg, #111827cc, #0b1020cc);
+    border:1px solid #1f2937; border-radius:14px; padding:14px 14px 12px;
+    box-shadow: 0 10px 30px #0007, inset 0 1px 0 #ffffff10;
+  }
+  h1{font-size:clamp(20px,2.2vw,28px); margin:0 0 6px; letter-spacing:.2px}
+  .sub{color:var(--muted); font-size:14px; margin-top:2px}
+  textarea{
+    width:100%; min-height:220px; resize:vertical; border-radius:10px; padding:12px 12px 10px;
+    background:#0b1222; border:1px solid #1f2937; color:var(--ink); font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+  .row > *{flex:1}
+  .btn{
+    appearance:none; border:1px solid #2a364f; background:#0e1a33; color:#dbeafe;
+    padding:10px 14px; border-radius:10px; font-weight:600; cursor:pointer;
+    box-shadow:0 6px 16px #0006, inset 0 1px 0 #ffffff12;
+    transition: transform .06s ease, background .2s ease, border-color .2s;
+    user-select:none;
+  }
+  .btn:hover{ background:#102145; border-color:#3a4f78 }
+  .btn:active{ transform: translateY(1px) }
+  .btn.primary{ background:#062916; border-color:#134e2a; color:#d1fae5 }
+  .btn.primary:hover{ background:#07351e; border-color:#1b6a3a }
+  .btn:disabled{ opacity:.6; cursor:not-allowed }
+  label{font-size:13px; color:var(--muted)}
+  input[type="number"]{
+    width:100%; padding:10px; border-radius:10px; border:1px solid #1f2937; background:#0b1222; color:var(--ink)
+  }
+  .canvasWrap{position:relative; aspect-ratio:1/1; max-height:min(78vh, 720px)}
+  canvas{width:100%; height:100%; display:block}
+  .pointer{
+    position:absolute; left:50%; top:-6px; transform:translateX(-50%);
+    width:0; height:0; border-left:16px solid transparent; border-right:16px solid transparent; border-bottom:26px solid #eab308;
+    filter: drop-shadow(0 6px 10px #0008);
+  }
+  .legend{display:grid; gap:6px; grid-template-columns:repeat(2, minmax(0,1fr)); margin-top:12px}
+  .badge{
+    display:flex; align-items:center; gap:8px; background:#0b1222; border:1px solid #1f2937; padding:8px 10px; border-radius:10px;
+    font-size:13px; color:#e5e7eb; overflow:hidden; text-overflow:ellipsis; white-space:nowrap
+  }
+  .swatch{width:14px; height:14px; border-radius:4px; border:1px solid #ffffff30}
+  .winner{
+    font-weight:800; letter-spacing:.3px; font-size:20px; color:#fef3c7;
+    text-shadow:0 2px 10px #000a; margin-top:6px; min-height:24px;
+  }
+  .tiny{font-size:12px; color:#94a3b8}
+  .hint{font-size:12px; color:#9ca3af; margin-top:6px}
+  .hr{height:1px; background:linear-gradient(90deg, transparent, #22314e, transparent); margin:10px 0}
+  .inline{display:inline-flex; gap:6px; align-items:center}
+  .toggle{appearance:none; width:38px; height:22px; border-radius:999px; background:#0b1222; border:1px solid #1f2937; position:relative; outline:none; cursor:pointer}
+  .toggle:before{content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#cbd5e1; transition:left .18s ease}
+  .toggle:checked{ background:#064e3b; border-color:#10b981 }
+  .toggle:checked:before{ left:18px; background:#ecfeff }
+  .pill{font-size:11px; padding:4px 8px; border-radius:999px; border:1px solid #1f2937; background:#0b1222; color:#cbd5e1}
+  .foot{color:#64748b; font-size:11px; text-align:center; margin-top:4px}
+</style>
+</head>
+<body>
+  <div class="app">
+    <div>
+      <h1>Random Wheel (with “Dennis mode” 🎯)</h1>
+      <div class="sub">Paste one name per line with an optional frequency. Format: <code>Name, Frequency</code>. Omit frequency = 1.</div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <div class="pointer"></div>
+          <canvas id="wheel" width="900" height="900" aria-label="Random wheel"></canvas>
+        </div>
+        <div class="winner" id="winner"></div>
+        <div class="hr"></div>
+        <div class="row">
+          <button class="btn" id="buildBtn" title="Build/refresh the wheel from the list below">Build Wheel</button>
+          <button class="btn primary" id="spinBtn" title="Spin the wheel">Spin</button>
+          <div class="inline" style="flex:0 0 auto">
+            <label class="inline tiny">
+              <input id="soundChk" type="checkbox" class="toggle" checked />
+              <span class="pill">tick</span>
+            </label>
+          </div>
+          <div class="inline" style="flex:0 0 auto">
+            <label class="inline tiny" title="When on, the wheel will always land on Dennis if present.">
+              <input id="dennisMode" type="checkbox" class="toggle" checked />
+              <span class="pill">Dennis mode</span>
+            </label>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="foot">Pointer is at the top. Each slice = one entry (after frequency expansion). The order is shuffled every build.</div>
+      </div>
+      <div class="card">
+        <label for="list">Names & Frequencies</label>
+        <textarea id="list" spellcheck="false" placeholder="Examples:
+Dennis, 5
+Ava, 2
+Liam
+Olivia, 3
+Noah, 2
+Mia"></textarea>
+        <div class="row">
+          <div>
+            <label>Extra full spins</label>
+            <input id="spins" type="number" min="2" max="10" step="1" value="5" />
+            <div class="hint">Purely cosmetic (how many times it whirls before stopping).</div>
+          </div>
+          <div>
+            <label>Spin duration (ms)</label>
+            <input id="ms" type="number" min="1200" max="12000" step="100" value="5000" />
+            <div class="hint">Ease-out animation with subtle randomness.</div>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn" id="example">Load Example</button>
+          <button class="btn" id="clear">Clear</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ----- Utilities -----
+  const $ = (id) => document.getElementById(id);
+  const rand = (min, max) => Math.random() * (max - min) + min;
+  const choice = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  // Deterministic name -> color (distinct-ish)
+  function nameColor(name){
+    // simple string hash -> hue
+    let h = 0;
+    for (let i=0;i<name.length;i++){ h = (h*31 + name.charCodeAt(i)) >>> 0; }
+    const hue = h % 360;
+    const sat = 65, light = 55;
+    return `hsl(${hue} ${sat}% ${light}%)`;
+  }
+
+  // Parse textarea into expanded entries: ["Dennis","Dennis","Ava",...]
+  function parseList(text){
+    const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const entries = [];
+    const countsByName = new Map();
+    for (const line of lines){
+      const m = line.split(",").map(s=>s.trim()).filter(Boolean);
+      if (!m.length) continue;
+      const name = m[0];
+      const freq = clamp(parseInt(m[1] ?? "1",10) || 1, 1, 999);
+      for (let i=0;i<freq;i++) entries.push(name);
+      countsByName.set(name, (countsByName.get(name)||0)+freq);
+    }
+    // Shuffle (Fisher-Yates)
+    for (let i=entries.length-1; i>0; i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [entries[i], entries[j]] = [entries[j], entries[i]];
+    }
+    return { entries, countsByName };
+  }
+
+  // ----- Wheel state -----
+  const canvas = $("wheel");
+  const ctx = canvas.getContext("2d");
+  const winnerEl = $("winner");
+  const legendEl = $("legend");
+  let data = [];           // expanded entries
+  let namePalette = new Map();
+  let segments = [];       // [{name, start, end}]
+  let rotation = 0;        // current wheel rotation (radians)
+  let spinning = false;
+  let tickAudio;
+
+  // Simple "tick" via WebAudio (no external files)
+  function makeTick(){
+    const actx = new (window.AudioContext||window.webkitAudioContext)();
+    return () => {
+      const o = actx.createOscillator();
+      const g = actx.createGain();
+      o.type="square";
+      o.frequency.value = 1800 + Math.random()*100;
+      g.gain.value = 0.03;
+      o.connect(g); g.connect(actx.destination);
+      o.start();
+      setTimeout(() => { o.stop(); }, 35);
+    };
+  }
+  tickAudio = makeTick();
+
+  function rebuild(){
+    const { entries, countsByName } = parseList($("list").value);
+    data = entries;
+    namePalette.clear();
+    countsByName.forEach((_, name) => namePalette.set(name, nameColor(name)));
+
+    // Build segments
+    segments = [];
+    const N = Math.max(1, data.length);
+    let angle = 0;
+    const step = (2*Math.PI)/N;
+    for (let i = 0; i < N; i++){
+      const start = angle;
+      const end = start + step;
+      segments.push({ name: data[i], start, end });
+      angle = end;
+    }
+
+    rotation = 0; // reset pose
+    draw();
+    buildLegend(countsByName);
+    winnerEl.textContent = "";
+  }
+
+  function buildLegend(counts){
+    legendEl.innerHTML = "";
+    // Sort by count desc then alpha
+    const rows = Array.from(counts.entries()).sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0]));
+    for (const [name,count] of rows){
+      const div = document.createElement("div");
+      div.className = "badge";
+      const sw = document.createElement("div");
+      sw.className = "swatch"; sw.style.background = namePalette.get(name);
+      const span = document.createElement("span");
+      span.textContent = `${name} • ${count}`;
+      div.appendChild(sw); div.appendChild(span);
+      legendEl.appendChild(div);
+    }
+  }
+
+  function draw(){
+    const w = canvas.width, h = canvas.height;
+    const r = Math.min(w,h)/2 - 20;
+    ctx.clearRect(0,0,w,h);
+    ctx.save();
+    ctx.translate(w/2, h/2);
+    ctx.rotate(rotation);
+
+    // slices
+    const N = Math.max(1, segments.length);
+    for (let i=0;i<N;i++){
+      const seg = segments[i];
+      const color = namePalette.get(seg.name) || "#475569";
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.arc(0,0, r, seg.start, seg.end);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // slice separators
+      ctx.strokeStyle = "rgba(15,23,42,0.9)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0,0, r, seg.start, seg.start);
+      ctx.stroke();
+
+      // labels
+      const mid = (seg.start + seg.end)/2;
+      ctx.save();
+      ctx.rotate(mid);
+      ctx.translate(r*0.72, 0);
+      ctx.rotate(Math.PI/2);
+      ctx.fillStyle = "#0b1020";
+      // label bubble for contrast
+      ctx.globalAlpha = .18;
+      ctx.fillRect(-70, -16, 140, 32);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "600 24px system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif";
+      const label = seg.name;
+      const max = 12;
+      const text = label.length>max? (label.slice(0,max-1)+"…"): label;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 0, 0);
+      ctx.restore();
+    }
+
+    // center hub
+    ctx.beginPath();
+    ctx.arc(0,0, r*0.1, 0, 2*Math.PI);
+    ctx.fillStyle = "#111827";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#374151";
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // Ease-out cubic
+  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+  // Figure out a target angle that lands on a specific segment index.
+  function targetRotationForSegmentIndex(idx, spinsFull=5){
+    const seg = segments[idx];
+    const pad = (seg.end - seg.start)*0.12; // avoid perfect boundaries
+    const landingAngle = rand(seg.start+pad, seg.end-pad); // angle in wheel-local coords
+    // The pointer is at angle 0 (top). We rotate the wheel so that
+    // pointer (0) aligns with landingAngle on the (rotated) wheel.
+    // After total rotation R, the wheel's angle space is shifted by R.
+    // The global angle at top (pointer) corresponds to (2π - (R mod 2π)).
+    // We want (2π - R_mod) ≈ landingAngle  =>  R_mod ≈ (2π - landingAngle)
+    const base = (2*Math.PI) - landingAngle;
+    // Add whole spins plus tiny random micro-offsets so it feels organic.
+    const micro = rand(-0.02, 0.02);
+    return spinsFull * 2*Math.PI + base + micro;
+  }
+
+  function currentWinningIndex(rot){
+    // Given rotation angle rot, which segment is under the pointer (top)?
+    const N = segments.length||1;
+    const pointerAngle = (2*Math.PI - (rot % (2*Math.PI))) % (2*Math.PI);
+    for (let i=0;i<N;i++){
+      const s=segments[i];
+      if (pointerAngle >= s.start && pointerAngle < s.end) return i;
+    }
+    // Handle boundary rounding to last slice
+    return N-1;
+  }
+
+  function spin(){
+    if (spinning || segments.length===0) return;
+    spinning = true;
+    winnerEl.textContent = "";
+
+    const dennisMode = $("dennisMode").checked;
+    const spinsFull = clamp(parseInt($("spins").value,10)||5, 1, 20);
+    const duration = clamp(parseInt($("ms").value,10)||5000, 800, 20000);
+    const wantDennis = dennisMode && data.some(n => n.toLowerCase() === "dennis");
+
+    // Choose target index: random… unless Dennis exists and mode is on.
+    let targetIdx;
+    if (wantDennis){
+      // choose among Dennis slices uniformly to keep it natural
+      const idxs = segments.map((s, i) => [s.name.toLowerCase(), i]).filter(([n]) => n === "dennis").map(([,i]) => i);
+      targetIdx = choice(idxs);
+    }else{
+      targetIdx = Math.floor(Math.random() * segments.length);
+    }
+
+    const startRot = rotation;
+    const endRot = targetRotationForSegmentIndex(targetIdx, spinsFull);
+
+    // Add a tiny extra wobble by overshooting a hair then easing back in last 6%
+    const overshoot = rand(0.01, 0.035) * 2*Math.PI;
+    const settleStart = 0.94; // when to start settling
+    const tickOn = $("soundChk").checked;
+
+    let lastTickBand = -1;
+    const start = performance.now();
+
+    (function frame(now){
+      const t = clamp((now - start)/duration, 0, 1);
+      let e = easeOutCubic(t);
+
+      let rot;
+      if (t < settleStart){
+        rot = startRot + e * (endRot + overshoot);
+      }else{
+        // settle from overshoot back to endRot
+        const localT = (t - settleStart) / (1 - settleStart);
+        const settleE = easeOutCubic(localT);
+        rot = startRot + (endRot + overshoot) + (endRot - (endRot + overshoot)) * settleE;
+      }
+
+      rotation = rot;
+      draw();
+
+      // tick sound each slice boundary crossed (optional)
+      if (tickOn && segments.length > 1){
+        const band = Math.floor(((2*Math.PI - (rotation % (2*Math.PI))) % (2*Math.PI)) / ((2*Math.PI)/segments.length));
+        if (band !== lastTickBand){
+          lastTickBand = band;
+          tickAudio();
+        }
+      }
+
+      if (t < 1){
+        requestAnimationFrame(frame);
+      }else{
+        spinning = false;
+        // Snap to exact target slice mid (imperceptible tiny correction)
+        const finalIdx = currentWinningIndex(rotation);
+        const name = segments[finalIdx]?.name ?? "(none)";
+        winnerEl.textContent = `Winner: ${name}`;
+      }
+    })(performance.now());
+  }
+
+  // ----- Wire up UI -----
+  $("buildBtn").addEventListener("click", rebuild);
+  $("spinBtn").addEventListener("click", spin);
+  $("clear").addEventListener("click", () => { $("list").value = ""; rebuild(); });
+  $("example").addEventListener("click", () => {
+    $("list").value =
+`Dennis, 3
+Ava, 2
+Liam
+Olivia, 4
+Noah, 2
+Mia, 2
+Sophia
+Ethan, 3
+Isabella`;
+    rebuild();
+  });
+
+  // Initial state (tiny default)
+  $("list").value = `Dennis, 3
+Ava, 1
+Liam, 2
+Olivia, 2`;
+  rebuild();
+
+  // Redraw on window resize for crispness
+  addEventListener("resize", () => draw(), {passive:true});
+})();
+</script>
+</body>
+</html>
