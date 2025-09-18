@@ -17,7 +17,7 @@
   .grid{display:grid; grid-template-columns:1fr 420px; gap:16px}
   @media (max-width: 980px){ .grid{grid-template-columns:1fr} }
   .card{
-    background:linear-gradient(180deg, #ffffffcc, #ffffffcc);
+    background:#ffffffcc;
     border:1px solid var(--border); border-radius:14px; padding:14px 14px 12px;
     box-shadow: 0 8px 30px #0000000d, inset 0 1px 0 #ffffff;
   }
@@ -84,13 +84,13 @@
       <div class="card">
         <div class="canvasWrap">
           <div class="pointer"></div>
-          <canvas id="wheel" width="900" height="900" aria-label="Random wheel"></canvas>
+          <canvas id="wheel" aria-label="Random wheel"></canvas>
         </div>
         <div class="winner" id="winner"></div>
         <div class="hr"></div>
         <div class="row">
-          <button class="btn" id="buildBtn" title="Build/refresh the wheel from the list below">Build Wheel</button>
-          <button class="btn primary" id="spinBtn" title="Spin the wheel">Spin</button>
+          <button class="btn" id="buildBtn">Build Wheel</button>
+          <button class="btn primary" id="spinBtn">Spin</button>
           <div class="inline" style="flex:0 0 auto">
             <label class="inline tiny">
               <input id="soundChk" type="checkbox" class="toggle" checked />
@@ -98,7 +98,7 @@
             </label>
           </div>
           <div class="inline" style="flex:0 0 auto">
-            <label class="inline tiny" title="When on, the wheel will always land on Dennis if present.">
+            <label class="inline tiny">
               <input id="dennisMode" type="checkbox" class="toggle" checked />
               <span class="pill">Dennis mode</span>
             </label>
@@ -132,17 +132,29 @@ Olivia, 3"></textarea>
 
 <script>
 (() => {
-  // ----- Utilities -----
   const $ = (id) => document.getElementById(id);
   const rand = (min, max) => Math.random() * (max - min) + min;
   const choice = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  // ROYGBIV palette, cycles for >7 names
-  const ROYGBIV = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6", "#4f46e5", "#a855f7"];
+  // ROYGBIV palette
+  const ROYGBIV = ["#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#4f46e5","#a855f7"];
 
-  // Assign colors per distinct name in encounter order (deterministic across builds if list order stable)
-  function assignRoygbivColors(names){
+  // Resize canvas backing store to match CSS size & device pixel ratio
+  function fitCanvasToDisplaySize(canvas) {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const rect = canvas.getBoundingClientRect();
+    const displayWidth  = Math.round(rect.width  * dpr);
+    const displayHeight = Math.round(rect.height * dpr);
+    if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+      canvas.width = displayWidth;
+      canvas.height = displayHeight;
+      return true;
+    }
+    return false;
+  }
+
+  function assignColors(names){
     const map = new Map();
     let i = 0;
     for (const n of names){
@@ -154,75 +166,55 @@ Olivia, 3"></textarea>
     return map;
   }
 
-  // Parse textarea into expanded entries: ["Dennis","Dennis","Ava",...]
   function parseList(text){
     const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
     const entries = [];
     const countsByName = new Map();
-    const distinctInOrder = [];
+    const distinct = [];
     for (const line of lines){
       const m = line.split(",").map(s=>s.trim()).filter(Boolean);
       if (!m.length) continue;
       const name = m[0];
-      if (!distinctInOrder.includes(name)) distinctInOrder.push(name);
+      if (!distinct.includes(name)) distinct.push(name);
       const freq = clamp(parseInt(m[1] ?? "1",10) || 1, 1, 999);
       for (let i=0;i<freq;i++) entries.push(name);
       countsByName.set(name, (countsByName.get(name)||0)+freq);
     }
-    // Shuffle (Fisher-Yates)
     for (let i=entries.length-1; i>0; i--){
       const j = Math.floor(Math.random()*(i+1));
       [entries[i], entries[j]] = [entries[j], entries[i]];
     }
-    return { entries, countsByName, distinctInOrder };
+    return { entries, countsByName, distinct };
   }
 
-  // ----- Wheel state -----
   const canvas = $("wheel");
   const ctx = canvas.getContext("2d");
-  const winnerEl = $("winner");
-  const legendEl = $("legend");
-  let data = [];           // expanded entries
-  let namePalette = new Map();
-  let segments = [];       // [{name, start, end}]
-  let rotation = 0;        // current wheel rotation (radians)
-  let spinning = false;
-  let tickAudio;
+  let data = [], namePalette = new Map(), segments = [], rotation = 0, spinning = false;
+  const winnerEl = $("winner"), legendEl = $("legend");
 
-  // Simple "tick" via WebAudio (no external files)
   function makeTick(){
     const actx = new (window.AudioContext||window.webkitAudioContext)();
     return () => {
-      const o = actx.createOscillator();
-      const g = actx.createGain();
-      o.type="square";
-      o.frequency.value = 1700 + Math.random()*150;
-      g.gain.value = 0.03;
-      o.connect(g); g.connect(actx.destination);
-      o.start();
-      setTimeout(() => { o.stop(); }, 35);
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type="square"; o.frequency.value = 1700 + Math.random()*150;
+      g.gain.value = 0.03; o.connect(g); g.connect(actx.destination);
+      o.start(); setTimeout(() => o.stop(), 35);
     };
   }
-  tickAudio = makeTick();
+  const tickAudio = makeTick();
 
   function rebuild(){
-    const { entries, countsByName, distinctInOrder } = parseList($("list").value);
+    const { entries, countsByName, distinct } = parseList($("list").value);
     data = entries;
-    namePalette = assignRoygbivColors(distinctInOrder);
-
-    // Build segments
+    namePalette = assignColors(distinct);
     segments = [];
     const N = Math.max(1, data.length);
-    let angle = 0;
-    const step = (2*Math.PI)/N;
+    let angle = 0, step = (2*Math.PI)/N;
     for (let i = 0; i < N; i++){
-      const start = angle;
-      const end = start + step;
-      segments.push({ name: data[i], start, end });
-      angle = end;
+      segments.push({ name: data[i], start: angle, end: angle + step });
+      angle += step;
     }
-
-    rotation = 0; // reset pose
+    rotation = 0;
     draw();
     buildLegend(countsByName);
     winnerEl.textContent = "";
@@ -230,8 +222,7 @@ Olivia, 3"></textarea>
 
   function buildLegend(counts){
     legendEl.innerHTML = "";
-    // Sort by count desc then alpha
-    const rows = Array.from(counts.entries()).sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0]));
+    const rows = Array.from(counts.entries()).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
     for (const [name,count] of rows){
       const div = document.createElement("div");
       div.className = "badge";
@@ -239,88 +230,52 @@ Olivia, 3"></textarea>
       sw.className = "swatch"; sw.style.background = namePalette.get(name) || "#94a3b8";
       const span = document.createElement("span");
       span.textContent = `${name} • ${count}`;
-      div.appendChild(sw); div.appendChild(span);
+      div.append(sw, span);
       legendEl.appendChild(div);
     }
   }
 
   function draw(){
+    fitCanvasToDisplaySize(canvas);
     const w = canvas.width, h = canvas.height;
     const r = Math.min(w,h)/2 - 20;
     ctx.clearRect(0,0,w,h);
     ctx.save();
     ctx.translate(w/2, h/2);
     ctx.rotate(rotation);
-
     const N = Math.max(1, segments.length);
-
-    // slices
-    for (let i=0;i<N;i++){
-      const seg = segments[i];
+    for (const seg of segments){
       const color = namePalette.get(seg.name) || "#94a3b8";
-      // fill
-      ctx.beginPath();
-      ctx.moveTo(0,0);
+      ctx.beginPath(); ctx.moveTo(0,0);
       ctx.arc(0,0, r, seg.start, seg.end);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-
-      // slice separators
-      ctx.strokeStyle = "#ffffffaa";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0,0, r, seg.start, seg.start);
-      ctx.stroke();
-
-      // label — along the radius (from center outwards)
+      ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+      ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0,0, r, seg.start, seg.start); ctx.stroke();
       const mid = (seg.start + seg.end)/2;
-      ctx.save();
-      ctx.rotate(mid);             // rotate so +x points along the slice radius
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#0b1320";
-      ctx.font = "600 22px system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif";
-
-      const inner = r*0.35;        // where text begins (closer to center)
-      const label = seg.name;
-      const max = 16;
-      const text = label.length>max? (label.slice(0,max-1)+"…"): label;
-
-      // subtle white text halo for contrast on darker ROYGBIV slices
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = "rgba(255,255,255,0.75)";
-      ctx.strokeText(text, inner, 0);
-
-      ctx.fillText(text, inner, 0);
+      ctx.save(); ctx.rotate(mid);
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "#0b1320"; ctx.font = "600 22px system-ui, sans-serif";
+      const inner = r*0.35;
+      const label = seg.name.length>16? seg.name.slice(0,15)+"…" : seg.name;
+      ctx.lineWidth = 6; ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.strokeText(label, inner, 0);
+      ctx.fillText(label, inner, 0);
       ctx.restore();
     }
-
-    // center hub
-    ctx.beginPath();
-    ctx.arc(0,0, r*0.1, 0, 2*Math.PI);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "#e5e7eb";
-    ctx.stroke();
-
+    ctx.beginPath(); ctx.arc(0,0, r*0.1, 0, 2*Math.PI);
+    ctx.fillStyle = "#ffffff"; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = "#e5e7eb"; ctx.stroke();
     ctx.restore();
   }
 
-  // Ease-out cubic
-  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-
-  // Figure out a target angle that lands on a specific segment index.
-  function targetRotationForSegmentIndex(idx, spinsFull=5){
+  const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+  function targetRotationForSegmentIndex(idx, spins=5){
     const seg = segments[idx];
-    const pad = (seg.end - seg.start)*0.12; // avoid perfect boundaries
-    const landingAngle = rand(seg.start+pad, seg.end-pad); // angle in wheel-local coords
+    const pad = (seg.end - seg.start)*0.12;
+    const landingAngle = rand(seg.start+pad, seg.end-pad);
     const base = (2*Math.PI) - landingAngle;
-    const micro = rand(-0.02, 0.02);
-    return spinsFull * 2*Math.PI + base + micro;
+    return spins*2*Math.PI + base + rand(-0.02,0.02);
   }
-
   function currentWinningIndex(rot){
     const N = segments.length||1;
     const pointerAngle = (2*Math.PI - (rot % (2*Math.PI))) % (2*Math.PI);
@@ -333,80 +288,32 @@ Olivia, 3"></textarea>
 
   function spin(){
     if (spinning || segments.length===0) return;
-    spinning = true;
-    winnerEl.textContent = "";
-
+    spinning = true; winnerEl.textContent = "";
     const dennisMode = $("dennisMode").checked;
     const spinsFull = clamp(parseInt($("spins").value,10)||5, 1, 20);
     const duration = clamp(parseInt($("ms").value,10)||5000, 800, 20000);
     const wantDennis = dennisMode && data.some(n => n.toLowerCase() === "dennis");
-
-    // Choose target index
-    let targetIdx;
-    if (wantDennis){
-      const idxs = segments.map((s, i) => [s.name.toLowerCase(), i]).filter(([n]) => n === "dennis").map(([,i]) => i);
-      targetIdx = choice(idxs);
-    }else{
-      targetIdx = Math.floor(Math.random() * segments.length);
-    }
-
+    let targetIdx = wantDennis
+      ? choice(segments.map((s,i)=>[s.name.toLowerCase(),i]).filter(([n])=>n==="dennis").map(([,i])=>i))
+      : Math.floor(Math.random()*segments.length);
     const startRot = rotation;
     const endRot = targetRotationForSegmentIndex(targetIdx, spinsFull);
-
-    const overshoot = rand(0.01, 0.035) * 2*Math.PI;
+    const overshoot = rand(0.01,0.035)*2*Math.PI;
     const settleStart = 0.94;
     const tickOn = $("soundChk").checked;
-
     let lastTickBand = -1;
     const start = performance.now();
-
     (function frame(now){
       const t = clamp((now - start)/duration, 0, 1);
-      let e = easeOutCubic(t);
-
-      let rot;
-      if (t < settleStart){
-        rot = startRot + e * (endRot + overshoot);
-      }else{
-        const localT = (t - settleStart) / (1 - settleStart);
-        const settleE = easeOutCubic(localT);
-        rot = startRot + (endRot + overshoot) + (endRot - (endRot + overshoot)) * settleE;
-      }
-
-      rotation = rot;
-      draw();
-
+      let rot = t<settleStart
+        ? startRot + easeOutCubic(t) * (endRot + overshoot)
+        : startRot + (endRot + overshoot) + (endRot - (endRot + overshoot)) * easeOutCubic((t - settleStart)/(1 - settleStart));
+      rotation = rot; draw();
       if (tickOn && segments.length > 1){
         const band = Math.floor(((2*Math.PI - (rotation % (2*Math.PI))) % (2*Math.PI)) / ((2*Math.PI)/segments.length));
-        if (band !== lastTickBand){
-          lastTickBand = band;
-          tickAudio();
-        }
+        if (band !== lastTickBand){ lastTickBand = band; tickAudio(); }
       }
-
-      if (t < 1){
-        requestAnimationFrame(frame);
-      }else{
+      if (t < 1) requestAnimationFrame(frame);
+      else {
         spinning = false;
-        const finalIdx = currentWinningIndex(rotation);
-        const name = segments[finalIdx]?.name ?? "(none)";
-        winnerEl.textContent = `Winner: ${name}`;
-      }
-    })(performance.now());
-  }
-
-  // ----- Wire up UI -----
-  $("buildBtn").addEventListener("click", rebuild);
-  $("spinBtn").addEventListener("click", spin);
-  $("list").addEventListener("keydown", (e) => { if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==="enter"){ e.preventDefault(); rebuild(); } });
-
-  // Start blank
-  $("list").value = "";
-  rebuild();
-
-  // Redraw on window resize for crispness
-  addEventListener("resize", () => draw(), {passive:true});
-})();
-</script>
-</body>
-</html>
+        const
